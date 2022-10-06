@@ -82,6 +82,8 @@ class Sig53:
         self.T = transform if transform else _identity
         self.TT = target_transform if target_transform else _identity
 
+        self._env = None
+
         cfg = (
             "Sig53"
             + ("Impaired" if impaired else "Clean")
@@ -94,10 +96,19 @@ class Sig53:
         self.path = self.root / cfg.name
         self.length = cfg.num_samples
         regenerate = regenerate or not os.path.isdir(self.path)
-        
+
         if regenerate and os.path.isdir(self.path):
             shutil.rmtree(self.path)
 
+        if regenerate:
+            print("Generating dataset...")
+            self._open_database()
+            self._generate_data(cfg)
+            self._env = None  # Close database after generation
+        else:
+            print("Existing data found, skipping data generation")
+
+    def _open_database(self) -> None:
         self._env = lmdb.open(
             str(self.path).encode(),
             max_dbs=3,
@@ -110,12 +121,6 @@ class Sig53:
         self._modulation_db = self._env.open_db(b"modulation")
         self._snr_db = self._env.open_db(b"snr")
 
-        if regenerate:
-            print("Generating dataset...")
-            self._generate_data(cfg)
-        else:
-            print("Existing data found, skipping data generation")
-
         self._sample_txn = self._env.begin(db=self._sample_db)
         self._modulation_txn = self._env.begin(db=self._modulation_db)
         self._snr_txn = self._env.begin(db=self._snr_db)
@@ -124,6 +129,9 @@ class Sig53:
         return self.length
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, int]:
+        if not self._env:
+            self._open_database()
+
         idx = str(idx).encode()
         x = pickle.loads(self._sample_txn.get(idx))
         y = int(self._modulation_txn.get(idx))
